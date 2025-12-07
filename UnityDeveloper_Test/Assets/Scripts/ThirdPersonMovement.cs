@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -25,6 +25,14 @@ public class ThirdPersonMovement : MonoBehaviour
     private bool isGrounded;
     Vector3 velocity;
 
+    [Header("Fall / Notify")]
+    [Tooltip("How many seconds ungrounded before notifying game manager")]
+    public float fallGrace = 7f;
+    float fallTimer = 0f;
+
+    [Tooltip("Assign your CollectableCollector (game manager) here so it can be notified on fall")]
+    public CollectableCollector gameManager;
+
     void Start()
     {
         trueSpeed = walkSpeed;
@@ -36,8 +44,25 @@ public class ThirdPersonMovement : MonoBehaviour
 
     void Update()
     {
+        // If the world is rotating, block horizontal movement but keep gravity & ground checks intact
+        if (MarkerSelector.IsRotating)
+        {
+            // Do NOT change isGrounded calculation here — preserve original behavior
+            // Keep gravity applied so player will fall if in the air
+            // Stop horizontal movement and zero animation speed
+            ApplyGravity();                    // updates velocity and moves vertically
+            anim.SetFloat("Speed", 0f);
+
+            UpdateFallTimerAndNotify();
+
+            return;
+        }
+
+        // --- ORIGINAL ground check logic (unchanged) ---
         isGrounded = Physics.CheckSphere(transform.position, 0.1f, 1);
         anim.SetBool("isGrounded", isGrounded);
+
+        UpdateFallTimerAndNotify();
 
         if (isGrounded && velocity.y < 0)
         {
@@ -71,32 +96,67 @@ public class ThirdPersonMovement : MonoBehaviour
             Vector3 moveDirection = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
             controller.Move(moveDirection.normalized * trueSpeed * Time.deltaTime);
 
-            if (sprinting == true)
-            {
-                anim.SetFloat("Speed", 2);
-            }
-            else
-            {
-                anim.SetFloat("Speed", 1);
-            }
+            anim.SetFloat("Speed", sprinting ? 2f : 1f);
         }
-
         else
         {
-            anim.SetFloat("Speed", 0);
+            anim.SetFloat("Speed", 0f);
         }
 
-        //jumping
+        // jumping - same as original
         if (Input.GetButtonDown("Jump") && isGrounded)
         {
-            velocity.y = Mathf.Sqrt((jumpHeight * 10) * -2f * gravity);
+            velocity.y = Mathf.Sqrt((jumpHeight * 10f) * -2f * gravity);
         }
 
-        if (velocity.y > -20)
+        // gravity (same as original)
+        if (velocity.y > -20f)
         {
-            velocity.y += (gravity * 10) * Time.deltaTime;
+            velocity.y += (gravity * 10f) * Time.deltaTime;
         }
 
         controller.Move(velocity * Time.deltaTime);
+    }
+
+    // Extracted gravity logic so we can reuse it while rotating (so player won't stick)
+    void ApplyGravity()
+    {
+        // keep original isGrounded check so we don't change behavior
+        isGrounded = Physics.CheckSphere(transform.position, 0.1f, 1);
+        anim.SetBool("isGrounded", isGrounded);
+
+        if (isGrounded && velocity.y < 0)
+            velocity.y = -1;
+
+        // apply gravity
+        if (velocity.y > -20f)
+            velocity.y += (gravity * 10f) * Time.deltaTime;
+
+        // vertical-only move while rotating (no horizontal movement)
+        controller.Move(new Vector3(0f, velocity.y, 0f) * Time.deltaTime);
+    }
+
+    void UpdateFallTimerAndNotify()
+    {
+        if (!isGrounded)
+        {
+            fallTimer += Time.deltaTime;
+
+            if (fallTimer >= fallGrace)
+            {
+                // Notify the game manager once (Make sure gameManager assigned in Inspector)
+                if (gameManager != null)
+                {
+                    gameManager.OnPlayerFellTooLong();
+                }
+
+                // clamp so we call only once until grounded again (or you can reset elsewhere)
+                fallTimer = 0f;
+            }
+        }
+        else
+        {
+            fallTimer = 0f;
+        }
     }
 }
